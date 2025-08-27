@@ -1,0 +1,1 @@
+# Estudo-usando-Regress-o-m-ltipla-e-outras-t-cnicas-de-elimina-es-de-varieis
