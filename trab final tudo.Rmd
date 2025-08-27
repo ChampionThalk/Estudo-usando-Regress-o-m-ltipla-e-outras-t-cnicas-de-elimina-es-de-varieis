@@ -1,0 +1,782 @@
+---
+title: "trab final regressao"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+date: "2025-06-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+
+```{r,message=FALSE}
+## Bibliotecas
+library(tidyverse)
+library(dplyr)
+library(knitr)
+library(gridExtra)
+library(GGally)
+library(ggstatsplot)
+library(QuantPsyc)
+library(car)
+library(patchwork)  
+library(leaps)
+library(gvlma)
+
+```
+
+
+```{r, }
+## Bibliotecas
+dados <- read.csv("gym_members_exercise_tracking.csv")
+
+
+dados <- dados %>%
+  dplyr::select(,
+    -Experience_Level,
+    -Max_BPM,
+    -BMI,
+    -`Workout_Frequency..days.week.`
+  )
+
+
+dados <- dados %>%
+  mutate(Gender = ifelse(Gender == "Male", "Homem", "Mulher")) %>%
+  rename(Genero = Gender)
+
+
+```
+
+## Objetivo Central: 
+
+Avaliar o impacto de diferentes modalidades de treino na eficácia da queima de gordura corporal e investigar a existência de diferenças significativas relacionadas ao gênero em cada tipo de exercício, visando contribuir para prescrições mais personalizadas e eficientes.
+
+
+## Descrição do Banco de Dados  
+
+Este banco de dados contém **973 observações**, distribuídas da seguinte forma:  
+- **Mulheres**: 462 observações (`47.5%`).  
+- **Homens**: 511 observações (`52.5%`).  
+Além disso, a distribuição das 973 observações por modalidade:
+  
+```{r, }
+relacao_genero <- dados %>%
+  group_by(Workout_Type, Genero) %>%
+  summarise(Qtd = n(), .groups = "drop") %>%
+  group_by(Workout_Type) %>%
+  mutate(percentual = Qtd/ sum(Qtd) * 100)
+
+tipos_treino <- unique(dados$Workout_Type)
+
+graficos <- lapply(tipos_treino, function(treino) {
+  temp <- dados %>%
+    filter(Workout_Type == treino) %>%
+    count(Genero) %>%
+    mutate(prop = n / sum(n))
+
+  ggplot(temp, aes(x = "", y = prop, fill = Genero)) +
+    geom_col(width = 1, color = "white") +
+    coord_polar(theta = "y") +
+    theme_void() +
+    labs(title = treino, fill = "Genero") +
+    geom_text(aes(label = paste0(round(prop * 100, 1), "%")),
+              position = position_stack(vjust = 0.5), size = 4)
+})
+
+
+graficos[[1]]
+graficos[[2]] 
+graficos[[3]] 
+graficos[[4]]  
+```
+  em adição a isso o estudo apresenta a seguinte composição amostral entre os grupos analisados:
+
+ 
+ 
+```{r,}
+ ggplot(data = dados, aes(x = Workout_Type, fill = Workout_Type)) +  
+  geom_bar(color = "black") +  
+  labs(title = "Distribuicao por Tipo de Treino", x = "Treino", y = "Contagem") +
+  scale_fill_manual(
+    values = c("Yoga" = "#4682B4", "HIIT" = "#007736", "Cardio" = "#ff0000", "Strength" = "#000000"),  
+    name = "Exercicio"  
+  ) +
+  theme_classic()
+
+
+```
+
+ 
+Todos os grupos têm quantidade similar de participantes e proporção equilibrada entre gêneros, garantindo comparações justas entre os diferentes tipos de exercício.
+ 
+O dataset foi publicado no Kaggle por Valak Horasani, e é amplamente utilizado para análises de saúde, desempenho físico e modelagem preditiva em projetos de ciência de dados e ele foi gerado
+gerado com dados simulados, mas com base em padrões realistas de exercícios. Ele foi construído com informações derivadas de:
+
+- Estudos de saúde e condicionamento físico de domínio público
+
+- Relatórios do setor sobre tendências de treino e bem-estar
+
+- Pesquisas sobre hábitos de exercício, dados de frequência cardíaca e gasto calórico.
+
+
+## Descrição das Variáveis do Banco de Dados
+
+
+```{r, echo=FALSE, message=FALSE}
+
+
+variaveis <- data.frame(
+  Variavel = c(
+    "Age", "Gender", "Weight (kg)", "Height (m)", "Avg_BPM", "Calories_Burned", "Workout_Type", 
+    "Water_Intake (liters)", "Fat_Percentage", "Resting_BPM", "Session_Duration (hours)"
+  ),
+  Descricao = c(
+    "Idade do membro da academia",
+    "Genero do membro (Masculino ou Feminino)",
+    "Peso do membro em quilogramas",
+    "Altura do membro em metros",
+    "Frequencia cardiaca media durante os treinos",
+    "Total de calorias queimadas por sessao",
+    "Tipo de exercicio praticado (Cardio, Musculacao, HIIT)",
+    "Quantidade de agua ingerida (litros/dia nos treinos)",
+    "Percentual de gordura corporal",
+    "Frequencia cardiaca em repouso",
+    "Duracao da sessao de treino em horas"
+  ),
+  stringsAsFactors = FALSE
+)
+
+knitr::kable(variaveis, caption = "Descricao das Variaveis do Dataset de Academia")
+```
+
+##  Análise Descritiva  
+A nossa variavel resposta vai ser a quantidade de calorias queimadas, então é importante fazer uma analise sobre ela antes.
+
+
+### Calories_Burned
+
+```{r, }
+summary(dados$Calories_Burned)
+
+
+cat("e desvio padrao de ")
+sd(dados$Calories_Burned)
+
+
+```
+Calories_Burned, que representa a quantidade de calorias queimadas por sessão de treino, apresentou uma média de 905,4 kcal e mediana de 893 kcal, valores próximos que indicam uma distribuição relativamente simétrica. O desvio padrão de 272,6 kcal revela uma variação moderada no gasto calórico entre os indivíduos, possivelmente associada a diferenças no tipo de exercício, intensidade e características físicas dos participantes.
+
+```{r, }
+ggplot(dados, aes(x = Workout_Type, y = Calories_Burned, fill = Workout_Type)) +
+  geom_boxplot(alpha = 0.8) +
+  labs(title = "Calorias Queimadas por Tipo de Treino",
+       x = "Tipo de Treino", y = "Calorias Queimadas") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+
+```
+O gráfico mostra a distribuição das calorias queimadas em diferentes tipos de treino: Cardio, HIIT, Strength (força) e Yoga. As medianas são bastante próximas, indicando que, em média, todos os treinos resultam em um gasto calórico semelhante, entre 900 e 1000 calorias.
+
+Todos os treinos apresentam grande variação no gasto calórico, sugerindo diferenças na intensidade, duração ou perfil dos praticantes. Além disso, há diversos outliers — sessões com gasto muito elevado — especialmente no treino de força.
+
+Chama a atenção o fato de o Yoga, frequentemente visto como mais leve, ter uma distribuição de calorias parecida com os outros treinos, o que pode indicar práticas mais intensas.
+
+No geral, não há um tipo de treino que se destaque claramente em termos de calorias queimadas. 
+
+
+```{r, }
+
+ggplot(dados, aes(x = Workout_Type, y = Calories_Burned, fill = Genero)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(title = "Calorias Queimadas por Gênero e Tipo de Treino",
+       x = "Tipo de Treino", y = "Calorias Queimadas") +
+  theme_minimal()
+
+
+```
+
+O gráfico mostra que, em todos os tipos de treino (Cardio, HIIT, Strength e Yoga), homens tendem a queimar mais calorias do que mulheres, com medianas mais altas e maior variação nos valores. A diferença é consistente, embora menos acentuada no Yoga.
+
+### Weight (kg), o peso das pessoas
+
+
+```{r,}
+
+
+ggplot(dados, aes(x = Genero, y = `Weight..kg.`, fill = Genero)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  geom_jitter(width = 0.1, alpha = 0.2) +  # para ver os pontos individuais
+  labs(title = "Distribuicao de Peso por Genero",
+       x = "Genero", y = "Peso (kg)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+ 
+
+ 
+```
+Homens costumam ser mais pesados que mulheres, oque parece natural, mas nada muito conclusivo.
+
+### Height (m), Altura das pessoas
+
+```{r,}
+ggplot(dados, aes(x = Genero, y = Height..m., fill = Genero)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  geom_jitter(width = 0.1, alpha = 0.2) +  # Pontos individuais com mesma transparência
+  labs(title = "Distribuição de Altura por Gênero",
+       x = "Gênero", 
+       y = "Altura (m)") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  scale_fill_manual(values = c("Homem" = "#1f77b4", "Mulher" = "#ff7f0e"))  # Mesmo esquema de cores
+
+```
+Semelhantemente ao peso, homens geralmente são mais altos que mulheres, o que é esperado, mas a diferença não parece tão marcante.
+
+
+### Age, Idade das pessoas
+```{r, warning=FALSE}
+
+
+# Gráfico para homens
+hist_masc <- ggplot(dados %>% filter(Genero == "Homem"), 
+                    aes(x = Age)) +
+  geom_histogram(binwidth = 5, fill = "#1f77b4", color = "white", alpha = 0.8) +
+  labs(title = "Distribuição de Idade - Masculino",
+       x = "Idade", 
+       y = "Contagem") +
+  xlim(15, 65) +  # Ajuste conforme seus dados
+  theme_minimal()
+
+# Gráfico para mulheres
+hist_fem <- ggplot(dados %>% filter(Genero == "Mulher"), 
+                   aes(x = Age)) +
+  geom_histogram(binwidth = 5, fill = "#ff7f0e", color = "white", alpha = 0.8) +
+  labs(title = "Distribuição de Idade - Feminino",
+       x = "Idade", 
+       y = "Contagem") +
+  xlim(15, 65) +  # Mesmo limite que o masculino para comparação justa
+  theme_minimal()
+
+# Combinar os gráficos
+hist_masc + hist_fem +
+  plot_annotation(title = "Distribuição de Idade por Gênero")
+
+```
+O gráfico sugere que a distribuição de idade entre homens e mulheres é semelhante, seguindo um padrão próximo ao esperado no mundo real, com maior concentração na faixa dos 30-40 anos. Porém, não há conclusões definitivas.
+
+
+Fiz os gráficos de Avg_BPM, Resting_BPM, Water_Intake, Session_Duration e Fat_Percentage, mas acabei não incluindo na análise final porque as diferenças entre homens e mulheres foram bem pequenas. As distribuições ficaram parecidas e não mostraram nenhuma relação muito clara com o tipo de treino ou com as calorias queimadas. Então, preferi focar nos gráficos que realmente trouxeram insights mais relevantes.
+
+### matriz de correlação
+```{r, }
+cooefi_table <- dados %>% 
+  dplyr::select(where(is.numeric))
+
+
+
+
+ggpairs(
+  cooefi_table,
+  lower = list(continuous = wrap("points", alpha = 0.4, color = "#1f77b4", size = 0.8)),
+  upper = list(continuous = wrap("cor", size = 4)),
+  diag  = list(continuous = wrap("densityDiag", fill = "#1f77b4", alpha = 0.6))
+) +
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid = element_blank(),
+    strip.text = element_text(face = "bold", color = "black")
+  )
+
+
+
+
+```
+
+
+
+
+A matriz de correlação mostra que a quantidade de calorias queimadas tem relação principalmente com a frequência cardíaca média (Avg_BPM) e a ingestão de água durante o treino — quanto maiores esses valores, maior tende a ser o gasto calórico. A idade aparece com uma correlação negativa, ou seja, pessoas mais jovens costumam queimar mais calorias. Peso e altura têm relação bem fraca, mas ainda assim positiva. Os gráficos de dispersão confirmam essas tendências e não mostram nada fora do padrão. No geral, essas variáveis parecem boas candidatas pra entrar na regressão e ajudar a explicar a variação na queima de calorias.
+
+## Análise e Modelagem dos Dados
+
+Para investigar a relação entre as variáveis preditoras e a quantidade de calorias queimadas, será ajustado um modelo de regressão linear múltipla. Este método permite avaliar o impacto individual de cada fator (como idade, peso, tipo de exercício, etc.) enquanto controla os demais.
+
+
+```{r, }
+regre <- lm(Calories_Burned ~ 
+              Age + 
+              as.factor(Genero) + 
+              `Weight..kg.` + 
+              `Height..m.` + 
+              Avg_BPM + 
+              as.factor(Workout_Type) + 
+              `Water_Intake..liters.` +
+              Fat_Percentage +
+              Resting_BPM +
+              `Session_Duration..hours.`,
+            data = dados)
+
+
+summary(regre)
+
+
+
+```
+Apesar de termos os coeficientes beta, não dá pra comparar diretamente sua importância, já que cada variável está em uma escala diferente (anos, metros, litros, etc.). Por isso, é importante padronizar as variáveis — colocando tudo na mesma escala — pra que os betas indiquem o efeito de um aumento de 1 desvio padrão. Assim, conseguimos avaliar melhor o peso relativo de cada variável no modelo.
+
+```{r}
+
+dados_pad <- dados %>%
+  mutate(across(
+    c(Calories_Burned, Age, `Weight..kg.`, `Height..m.`, Avg_BPM, `Water_Intake..liters.`, 
+      Fat_Percentage, Resting_BPM, `Session_Duration..hours.`),
+    scale
+  ))
+
+# Manter os fatores como fator
+dados_pad$Genero <- as.factor(dados_pad$Genero)
+dados_pad$Workout_Type <- as.factor(dados_pad$Workout_Type)
+
+modelo <- lm(Calories_Burned ~ 
+               Age + 
+               Genero + 
+               `Weight..kg.` + 
+               `Height..m.` + 
+               Avg_BPM + 
+               Workout_Type + 
+               `Water_Intake..liters.` + 
+               Fat_Percentage + 
+               Resting_BPM + 
+               `Session_Duration..hours.`, 
+             data = dados_pad,  na.action = na.omit)
+
+
+
+summary(modelo)  
+
+summary(dados_pad$Calories_Burned)
+
+anova(modelo)
+
+```
+Mesmo com a variável Calories_Burned padronizada com média zero, o modelo ainda apresentou um intercepto diferente de zero. Isso acontece porque algumas variáveis categóricas, como o gênero e o tipo de treino, não passam pelo mesmo tipo de padronização que as variáveis numéricas. Isso não é um erro, mas uma característica do modelo.
+
+O coeficiente do gênero feminino foi de aproximadamente -0.31, indicando que, mesmo controlando por outras variáveis como peso, altura, duração do treino, batimentos e percentual de gordura, as mulheres queimam, em média, 0.31 desvios padrão a menos de calorias do que os homens. Esse resultado aponta para uma diferença consistente entre os gêneros no gasto calórico, mesmo em condições semelhantes.
+
+
+
+```{r}
+modelo_arr <- lm(Calories_Burned ~ 
+               Age + 
+               Genero + 
+               `Height..m.` + 
+               Avg_BPM + 
+               Workout_Type + 
+               `Water_Intake..liters.` + 
+               Fat_Percentage + 
+               Resting_BPM + 
+               `Session_Duration..hours.`, 
+             data = dados_pad,  na.action = na.omit)
+
+
+
+vif(modelo)
+
+
+```
+
+
+
+outro fator importante, são as GVIFs encontradas, elas foram baixas, indicando que não há colinearidade preocupante entre as variáveis explicativas. Isso significa que cada variável contribui de forma independente para explicar a queima de calorias, sem redundância excessiva entre elas
+
+
+
+### Pensando em uma regressão polinomial agora
+
+vamos ver se tem uma relacao quadratica
+
+
+```{r}
+
+
+modelo_quad <- lm(Calories_Burned ~ 
+                    Age + I(Age^2) +
+                    `Height..m.` + I(`Height..m.`^2) +
+                    Avg_BPM + I(Avg_BPM^2) +
+                    `Water_Intake..liters.` + I(`Water_Intake..liters.`^2) +
+                    Fat_Percentage + I(Fat_Percentage^2) +
+                    Resting_BPM + I(Resting_BPM^2) +
+                    `Session_Duration..hours.` + I(`Session_Duration..hours.`^2) +
+                    Genero +
+                    Workout_Type,
+                  data = dados_pad,na.action = na.omit)
+
+
+summary(modelo_quad)
+
+
+
+```
+Porem, é importante também testas para ver se é melhor que o modelo anterior.
+
+```{r}
+anova(modelo,modelo_quad)
+
+
+
+```
+
+O resultado da análise indicou uma melhoria significativa no modelo com termos polinomiais. O teste F apresentou um valor de 8.1366 com um p-valor extremamente pequeno (1.35 × 10⁻⁸), evidenciando que o modelo quadrático é estatisticamente superior ao linear. Isso sugere que ao menos algumas variáveis explicativas apresentam efeitos não lineares sobre Calories_Burned, e sua representação quadrática ajudou a capturar esses padrões
+
+Apesar de a regressão polinomial ter mostrado um desempenho superior ao modelo linear simples — indicando que há curvaturas importantes a serem consideradas —, ela também aumenta a complexidade do modelo com muitos termos quadráticos. Para lidar com isso, aplicamos o método de seleção backward, que parte do modelo completo e elimina progressivamente as variáveis menos relevantes. Como são poucas variáveis, o método Backward é a melhor escolha.
+
+
+
+A quantidade minima que cada criterio usa:
+
+```{r, warning=FALSE}
+
+melhores_varaiveis <- regsubsets(Calories_Burned ~ 
+                    Age + I(Age^2) +
+                    `Height..m.` + I(`Height..m.`^2) +
+                    Avg_BPM + I(Avg_BPM^2) +
+                    `Water_Intake..liters.` + I(`Water_Intake..liters.`^2) +
+                    Fat_Percentage + I(Fat_Percentage^2) +
+                    Resting_BPM + I(Resting_BPM^2) +
+                    `Session_Duration..hours.` + I(`Session_Duration..hours.`^2) +
+                    Genero +
+                    Workout_Type,data = dados_pad, nvmax = 8, method = "backward" )
+
+
+
+resumo <- summary(melhores_varaiveis)
+
+
+df_modelos <- tibble::tibble(
+  num_var = 1:length(resumo$cp),
+  Cp = resumo$cp,
+  BIC = resumo$bic
+)
+
+# 4. Gráfico Cp
+ggplot(df_modelos, aes(x = num_var, y = Cp)) +
+  geom_line(color = "darkblue", linewidth = 1) +
+  geom_point(color = "steelblue", size = 2) +
+  geom_point(aes(x = num_var[which.min(Cp)], y = min(Cp)), 
+             color = "red", size = 3) +
+  labs(title = "Cp de Mallows por Número de Variáveis",
+       x = "Número de Variáveis",
+       y = "Cp") +
+  theme_minimal()
+
+# 5. Gráfico BIC
+ggplot(df_modelos, aes(x = num_var, y = BIC)) +
+  geom_line(color = "darkgreen", linewidth = 1) +
+  geom_point(color = "seagreen", size = 2) +
+  geom_point(aes(x = num_var[which.min(BIC)], y = min(BIC)), 
+             color = "red", size = 3) +
+  labs(title = "BIC por Número de Variáveis",
+       x = "Número de Variáveis",
+       y = "BIC") +
+  theme_minimal()
+
+#plot(melhores_varaiveis, scale = "Cp")
+#plot(melhores_varaiveis, scale = "bic")
+
+```
+De cada criterios, criamos cada formula de regressão
+
+#### Do bic temos as seguintes variaveis:
+```{r warning=FALSE}
+regre_bic <- lm(Calories_Burned ~ 
+                    Age + I(Age^2) +
+                    
+                    Avg_BPM + 
+                     I(Fat_Percentage^2) +
+                    `Session_Duration..hours.` + 
+                    Genero +
+                    Workout_Type,
+                  data = dados_pad)
+
+names(which(resumo$which[6, ]))
+
+
+```
+
+mas como estudamos o peso do tipo do exercicio vou incluir-lo na formula também.
+Obtivemos a seguinte formula com o criterio bic:
+
+```{R}
+summary(regre_bic)
+
+
+```
+
+```{r}
+r2_parciais_completos <- function(modelo, data) {
+  # Extrai os termos da fórmula
+  termos <- attr(terms(modelo), "term.labels")
+  
+  r2_total <- summary(modelo)$r.squared
+  
+  resultados <- sapply(termos, function(var) {
+    # Tenta remover o termo e ajustar modelo reduzido
+    formula_reduzida <- update(formula(modelo), paste(". ~ . -", var))
+    modelo_reduzido <- tryCatch(
+      lm(formula_reduzida, data = data),
+      error = function(e) return(NA)
+    )
+    
+    if (inherits(modelo_reduzido, "lm")) {
+      r2_reduzido <- summary(modelo_reduzido)$r.squared
+      r2_total - r2_reduzido
+    } else {
+      NA  # Se não conseguir ajustar o modelo reduzido
+    }
+  })
+  
+  # Monta tabela
+  df <- data.frame(
+    Variável = termos,
+    R2_Parcial = round(as.numeric(r2_total - r2_total + resultados), 4)
+  )
+  
+  # Ordena em ordem decrescente
+  df[order(-df$R2_Parcial), ]
+}
+ 
+r2_parciais_completos(regre_bic,dados_pad)
+
+
+```
+
+
+O modelo indica que a variável mais relevante na explicação das calorias queimadas é a duração da sessão de treino, com um R² parcial de 0.5772 — ou seja, sozinha, ela explica mais da metade da variabilidade do gasto calórico.
+
+O gênero (GeneroMulher) também contribui com um R² parcial de 0.0264, mostrando influência modesta, mas significativa, no resultado. Já o tipo de exercício (Workout_Type) teve impacto praticamente nulo no modelo, com um R² parcial de 0.0001, sugerindo que, ao controlar pelas outras variáveis, a categoria da atividade não altera substancialmente a previsão do gasto calórico.
+
+
+#### Do Cp temos as seguintes variaveis:
+
+
+```{r}
+
+cp_melhor  <- which.min(resumo$cp)
+regre_cp <- lm(Calories_Burned ~ 
+                    Age + I(Age^2) +
+                    Avg_BPM + 
+                     I(Fat_Percentage^2) +
+                    Resting_BPM +
+                    `Session_Duration..hours.` + I(`Session_Duration..hours.`^2) +
+                    Genero +
+                    Workout_Type,
+                  data = dados_pad)
+
+names(which(resumo$which[8, ]))
+ 
+```
+mas como estudamos o pesso do tipo do exercicio vou incluirlo na formula também.
+Obtivemos a seguinte formula com o criterio bic:
+
+```{r}
+
+summary(regre_cp)
+
+r2_parciais_completos(regre_cp,dados_pad)
+
+```
+No modelo com menor Cp, a duração da sessão segue sendo a variável mais relevante, com R² parcial de 0.5547, reforçando seu papel central no gasto calórico. As demais variáveis têm contribuição bem menor, o que indica que, apesar de o modelo ser maior, a explicação segue concentrada.
+
+O gênero contribui de forma modesta (R² parcial de 0.0264) e o tipo de exercício, mesmo presente no modelo, praticamente não altera a previsão (R² parcial de 0.0001). Isso sugere que características fisiológicas e tempo de treino têm mais peso que a categoria da atividade em si
+
+
+## Análise de Observações Influentes 
+
+### Modelo BIC
+Cook's Distance (regre_bic)
+
+```{r}
+
+plot(regre_bic, which = 4, main = "Cook's Distance - Modelo BIC")
+cutoff_cook <- 4/length(cooks.distance(regre_bic))
+abline(h = cutoff_cook, col = "red", lty = 2)
+# Identificar observações influentes
+influ_cook_bic <- which(cooks.distance(regre_bic) > cutoff_cook)
+if (length(influ_cook_bic) > 0) {
+  print("Observações influentes pelo Cook's Distance (Modelo BIC):")
+  print(influ_cook_bic)
+} else {
+  print("Não há observações influentes significativas pelo Cook's Distance no Modelo BIC.")
+}
+
+```
+DFFITS (regre_bic)
+
+```{r}
+plot(dffits(regre_bic), main = "DFFITS - Modelo BIC",
+     ylab = "DFFITS", xlab = "Índice da Observação")
+cutoff_dffits <- 2 * sqrt(length(coef(regre_bic)) / nobs(regre_bic))
+abline(h = c(cutoff_dffits, -cutoff_dffits), col = "red", lty = 2)
+# Identificar observações influentes
+influ_dffits_bic <- which(abs(dffits(regre_bic)) > cutoff_dffits)
+if (length(influ_dffits_bic) > 0) {
+  print("Observações influentes pelo DFFITS (Modelo BIC):")
+  print(influ_dffits_bic)
+} else {
+  print("Não há observações influentes significativas pelo DFFITS no Modelo BIC.")
+}
+
+```
+
+DFBETAS (regre_bic)
+
+```{r}
+
+dfbetas_bic <- dfbetas(regre_bic)
+par(mfrow = c(2, 2)) # Ajusta para exibir múltiplos gráficos
+for (i in 1:ncol(dfbetas_bic)) {
+  plot(dfbetas_bic[, i], main = paste("DFBETAS para", colnames(dfbetas_bic)[i]),
+       ylab = "DFBETAS", xlab = "Índice da Observação")
+  cutoff_dfbetas <- 2 / sqrt(nobs(regre_bic))
+  abline(h = c(cutoff_dfbetas, -cutoff_dfbetas), col = "red", lty = 2)
+}
+par(mfrow = c(1, 1)) # Reseta o layout do gráfico
+
+# Identificar observações influentes para cada coeficiente
+influ_dfbetas_bic_summary <- lapply(1:ncol(dfbetas_bic), function(i) {
+  obs_influentes <- which(abs(dfbetas_bic[, i]) > 2 / sqrt(nobs(regre_bic)))
+  if (length(obs_influentes) > 0) {
+    return(list(coef = colnames(dfbetas_bic)[i], obs = obs_influentes))
+  } else {
+    return(NULL)
+  }
+})
+influ_dfbetas_bic_summary <- influ_dfbetas_bic_summary[!sapply(influ_dfbetas_bic_summary, is.null)]
+if (length(influ_dfbetas_bic_summary) > 0) {
+  print("Observações influentes pelo DFBETAS (Modelo BIC):")
+  print(influ_dfbetas_bic_summary)
+} else {
+  print("Não há observações influentes significativas pelo DFBETAS no Modelo BIC.")
+}
+
+
+
+```
+
+### Modelo Cp
+
+Cook's Distance (regre_cp)
+
+```{r}
+plot(regre_cp, which = 4, main = "Cook's Distance - Modelo Cp")
+cutoff_cook <- 4/length(cooks.distance(regre_cp))
+abline(h = cutoff_cook, col = "red", lty = 2)
+# Identificar observações influentes
+influ_cook_cp <- which(cooks.distance(regre_cp) > cutoff_cook)
+if (length(influ_cook_cp) > 0) {
+  print("Observações influentes pelo Cook's Distance (Modelo Cp):")
+  print(influ_cook_cp)
+} else {
+  print("Não há observações influentes significativas pelo Cook's Distance no Modelo Cp.")
+}
+```
+
+
+DFFITS (regre_cp)
+
+
+```{r}
+plot(dffits(regre_cp), main = "DFFITS - Modelo Cp",
+     ylab = "DFFITS", xlab = "Índice da Observação")
+cutoff_dffits <- 2 * sqrt(length(coef(regre_cp)) / nobs(regre_cp))
+abline(h = c(cutoff_dffits, -cutoff_dffits), col = "red", lty = 2)
+# Identificar observações influentes
+influ_dffits_cp <- which(abs(dffits(regre_cp)) > cutoff_dffits)
+if (length(influ_dffits_cp) > 0) {
+  print("Observações influentes pelo DFFITS (Modelo Cp):")
+  print(influ_dffits_cp)
+} else {
+  print("Não há observações influentes significativas pelo DFFITS no Modelo Cp.")
+}
+
+
+```
+
+DFBETAS (regre_cp)
+
+```{r}
+dfbetas_cp <- dfbetas(regre_cp)
+par(mfrow = c(2, 2)) # Ajusta para exibir múltiplos gráficos
+for (i in 1:ncol(dfbetas_cp)) {
+  plot(dfbetas_cp[, i], main = paste("DFBETAS para", colnames(dfbetas_cp)[i]),
+       ylab = "DFBETAS", xlab = "Índice da Observação")
+  cutoff_dfbetas <- 2 / sqrt(nobs(regre_cp))
+  abline(h = c(cutoff_dfbetas, -cutoff_dfbetas), col = "red", lty = 2)
+}
+par(mfrow = c(1, 1)) # Reseta o layout do gráfico
+
+# Identificar observações influentes para cada coeficiente
+influ_dfbetas_cp_summary <- lapply(1:ncol(dfbetas_cp), function(i) {
+  obs_influentes <- which(abs(dfbetas_cp[, i]) > 2 / sqrt(nobs(regre_cp)))
+  if (length(obs_influentes) > 0) {
+    return(list(coef = colnames(dfbetas_cp)[i], obs = obs_influentes))
+  } else {
+    return(NULL)
+  }
+})
+influ_dfbetas_cp_summary <- influ_dfbetas_cp_summary[!sapply(influ_dfbetas_cp_summary, is.null)]
+if (length(influ_dfbetas_cp_summary) > 0) {
+  print("Observações influentes pelo DFBETAS (Modelo Cp):")
+  print(influ_dfbetas_cp_summary)
+} else {
+  print("Não há observações influentes significativas pelo DFBETAS no Modelo Cp.")
+}
+
+```
+
+
+Com base na análise das métricas DFBETAS, Cook's Distance e DFFITS para os modelos BIC e Cp, a conclusão é a seguinte:
+
+Para ambos os modelos (BIC e Cp), não foram identificadas observações significativamente influentes. Isso significa que, de acordo com os critérios e limiares utilizados para cada uma dessas métricas de diagnóstico, nenhuma observação individual exerce uma influência desproporcional ou preocupante sobre os coeficientes do modelo ou sobre as previsões.
+
+Em outras palavras, os modelos são considerados robustos em relação à influência de pontos de dados isolados, indicando que os resultados e as conclusões derivadas deles são estáveis e não são distorcidos pela presença de outliers extremos ou pontos de alavancagem excessivos.
+
+## Observacoes
+
+Dentre os modelos analisados, não obtivemos todas as suposições aceitas, p. Portanto, uma melhor maneira para prosseguir seria com o uso de mínimos quadrados generalizados (MQG).
+
+
+Na nossa primeira regressao podemos ver as supocioes sendo rejeitadas:
+```{r}
+primregre    <-   gvlma(modelo_arr)
+
+primsum <- summary(primregre)$GlobalTest
+
+primsum
+
+
+
+```
+
+Na nossa segunda regressao podemos ver as supocioes sendo rejeitadas:
+```{r}
+segundoregre <- gvlma(modelo_quad)
+segundosum <- summary(segundoregre)$GlobalTest
+segundosum
+
+```
+
+
+
+
+
+
+
+
+
+
+
